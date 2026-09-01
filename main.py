@@ -9,10 +9,7 @@ def read_root():
     Home page endpoint.
     Serves a simple welcome message in JSON format.
     """
-    try:
-        return {"message": "Welcome to the Authentication Core."}
-    except HTTPException as e:
-        raise e
+    return {"message": "Welcome to the Authentication Core."}
 
 @app.get("/health")
 def health_check():
