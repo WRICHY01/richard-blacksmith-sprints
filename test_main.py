@@ -110,4 +110,4 @@ def test_signup_successful():
     stored_hash = users_db["eoihd@gmai.com"]
 
     assert stored_hash != test_password
-    assert ph.verify(hashed_password, test_password) is True
+    assert ph.verify(stored_hash, test_password) is True
