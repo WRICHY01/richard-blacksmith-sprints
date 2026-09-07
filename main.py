@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
@@ -28,7 +28,7 @@ def get_health_status():
     """
     return {"status": "ok"}
 
-@app.post("/signup")
+@app.post("/signup", status_code=201)
 def register_user(user_cred: UserRegisteration):
     """
     Validate the user's credentials on sign up before saving to the user-database.
@@ -39,7 +39,7 @@ def register_user(user_cred: UserRegisteration):
     if not user_cred.password:
         raise HTTPException(status_code=400, detail="Password cannot be empty!")
     
-    if len(user_cred.password) < MIN_PASSWORD_LENGTH: # why does int not have len method or whats it equivalence?
+    if len(user_cred.password) < MIN_PASSWORD_LENGTH:
         raise HTTPException(status_code=400, detail=f"Password must have a min of {MIN_PASSWORD_LENGTH} characters long")
 
     hashed_user_password = ph.hash(user_cred.password)
@@ -48,7 +48,7 @@ def register_user(user_cred: UserRegisteration):
     return {"message": "Your credentials have been saved! you can now log in"}
 
 
-@app.post("/signin")
+@app.post("/signin", status_code=202)
 def user_signin(user_cred: UserRegisteration):
     """
     validate the user's signin credentials matches information in the user-database.
@@ -57,7 +57,7 @@ def user_signin(user_cred: UserRegisteration):
         raise HTTPException(status_code=400, detail="Email or Password doesnt match")
     
     if not user_cred.password:
-        raise HTTPException(status_code=400, detail="Password cannot be empty!")
+        raise HTTPException(status_code=400, detail="Email or Password doesnt match")
     
     try:
         ph.verify(users_db[user_cred.email], user_cred.password)

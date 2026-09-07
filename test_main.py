@@ -1,15 +1,28 @@
-from fastapi.testclient import TestClient
-from main import app, MIN_PASSWORD_LENGTH
+import os
 
+import pytest
+from fastapi.testclient import TestClient
+from main import app, users_db, MIN_PASSWORD_LENGTH, ph
+
+test_password = "supersecure12"
+hashed_password = ph.hash(test_password)
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def run_around_tests():
+    """Resets the mock in-memory database before and after every single test."""
+    users_db.clear()
+    yield
+
+# --- 1. Root & Health Check Tests ---
 
 def test_read_root():
     """
     Verifies that the home endpoint is working
     """
-
     response = client.get('/')
+
     assert response.status_code == 200
     assert response.json() == {"message": "Welcome to the homepage!"}
 
@@ -18,52 +31,110 @@ def test_health_check():
     Verifies that at health endpoint is working as expected
     """
     response = client.get("/health")
+
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
-def test_signup_flows():
+# --- 2. Signup Endpoint Tests ---
+
+def test_signup_duplicate_email():
     """
-    Verifies that the /signup endpoint validates data inputs correctly.
+    Verifies that /signup endpoint prevents account duplication
     """
-    response = client.post("/signup", json={"email": "eoihdgmaicom", "password": "12345678" })
-    assert response.status_code == 422
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post("/signup", json={"email": "eoihd@gmai.com", "password": test_password})
 
-    response = client.post(url="/signup", json={"email": "eoihd@gmai.com", "password": "" })
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Password cannot be empty!"}
-
-    response = client.post(url="/signup", json={"email": "eoihd@gmai.com", "password": "1234" })
-    assert response.status_code == 400
-    assert response.json() == {"detail": f"Password must have a min of {MIN_PASSWORD_LENGTH} characters long"}
-
-    response = client.post("/signup", json={"email": "eoihd@gmai.com", "password": "supersecure12"})
-    assert response.status_code == 200
-    assert response.json() == {"message": "Your credentials have been saved! you can now log in"}
-
-    response = client.post("/signup", json={"email": "eoihd@gmai.com", "password": "supersecure12"})
     assert response.status_code == 400
     assert response.json() == {"detail": "That email is already in use!"}
 
+def test_signup_invalid_email():
+    """
+    Verifies that /signup endpoint catches invalid emails via Pydantic (422).
+    """
+    response = client.post("/signup", json={"email": "eoihdgmaicom", "password": "12345678" })
 
-def test_signin_flows():
-    """
-    Verifies that the /signin endpoint validates data inputs correctly.
-    """
-    response = client.post("/signin", json={"email": "eoihdgmaicom", "password": "12345678" })
     assert response.status_code == 422
-    
-    response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": ""})
+
+def test_signup_empty_password():
+    """
+    Verifies that /signup endpoint prevents empty password
+    """
+    response = client.post(url="/signup", json={"email": "eoihd@gmai.com", "password": "" })
+
     assert response.status_code == 400
     assert response.json() == {"detail": "Password cannot be empty!"}
 
-    response = client.post(url="/signin", content='{"email": "geoihd@gmai.com", "password": "123456578"}')
+def test_signup_password_must_have_8_min_chars():
+    """
+    Verifies that the /signup endpoint requires a minimum password length.
+    """
+    response = client.post(url="/signup", json={"email": "eoihd@gmai.com", "password": "1234" })
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": f"Password must have a min of {MIN_PASSWORD_LENGTH} characters long"}
+
+
+def test_signup_successful():
+    """
+    Verifies that the /signup endpoint validates and saves user data correctly.
+    """
+    response = client.post("/signup", json={"email": "eoihd@gmai.com", "password": test_password})
+
+    assert response.status_code == 201
+    assert response.json() == {"message": "Your credentials have been saved! you can now log in"}
+    assert "eoihd@gmai.com" in users_db
+
+    stored_hash = users_db["eoihd@gmai.com"]
+
+    assert stored_hash != test_password
+    assert stored_hash.startswith("$argon2id$")
+
+# --- 3. Signin Endpoint Tests ---
+
+def test_signin_invalid_email():
+    """
+    Verifies that /signin endpoint prevents invalid email format structure.
+    """
+    response = client.post("/signin", json={"email": "eoihdgmaicom", "password": "12345678" })
+
+    assert response.status_code == 422
+
+def test_signin_empty_password():
+    """
+    Verifies that /signin endpoint hides specific database existence data on empty inputs.
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": ""})
+
     assert response.status_code == 400
     assert response.json() == {"detail": "Email or Password doesnt match"}
 
+def test_signin_email_doesnt_match():
+    """
+    Verifies that the /signin endpoint prevents user signing in with non-existent email
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post(url="/signin", json={"email": "geoihd@gmai.com", "password": test_password})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Email or Password doesnt match"}
+
+def test_signin_password_doesnt_match():
+    """
+    Verifies that the /signin endpoint prevents user signing in with wrong password
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
     response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": "supersecure123"})
+
     assert response.status_code == 400
     assert response.json() == {"detail": "Email or Password doesnt match"}
 
-    response = client.post("/signin", json={"email": "eoihd@gmai.com", "password": "supersecure12"})
-    assert response.status_code == 200
+def test_signin_succesful():
+    """
+    Verifies that the /signin endpoint signs in the user successfully.
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post("/signin", json={"email": "eoihd@gmai.com", "password": test_password})
+
+    assert response.status_code == 202
     assert response.json() == {"message": "Welcome back!"}
