@@ -47,7 +47,6 @@ def register_user(user_cred: UserRegisteration):
 
     if normalized_email in users_db:
         raise HTTPException(status_code=400, detail="That email is already in use")
-    # else:
         
     hashed_user_password = ph.hash(user_cred.password)
     users_db[normalized_email] = hashed_user_password
