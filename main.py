@@ -8,10 +8,10 @@ app = FastAPI()
 ph = PasswordHasher()
 
 MIN_PASSWORD_LENGTH = 8
-MAX_PASSWORD_LENGTH = 15
+MAX_PASSWORD_LENGTH = 256
 users_db = {}
 
-class UserRegisteration(BaseModel):
+class UserRegistration(BaseModel):
     email: EmailStr
     password: str
 
@@ -30,7 +30,7 @@ def get_health_status():
     return {"status": "ok"}
 
 @app.post("/signup", status_code=201)
-def register_user(user_cred: UserRegisteration):
+def register_user(user_cred: UserRegistration):
     """
     Validate the user's credentials on sign up before saving to the user-database.
     """

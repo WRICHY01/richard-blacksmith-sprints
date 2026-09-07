@@ -79,7 +79,7 @@ def test_signup_empty_password():
     assert response.status_code == 400
     assert response.json() == {"detail": "Password cannot be empty!"}
 
-def test_signup_password_must_have_8_min_chars():
+def test_signup_password_too_short():
     """
     Verifies that the /signup endpoint prevents password length less than the minimum allowable length.
     """
@@ -88,11 +88,11 @@ def test_signup_password_must_have_8_min_chars():
     assert response.status_code == 400
     assert response.json() == {"detail": f"Password must have a min of {MIN_PASSWORD_LENGTH} characters long"}
 
-def test_signup_password_must_not_exceed_15_chars():
+def test_signup_password_too_long():
     """
-    Verifies that the /signup endpoint "prevents excessively long passwords to prevent CPU exhaustion.
+    Verifies that the /signup endpoint prevents excessively long passwords to prevent CPU exhaustion.
     """
-    response = client.post(url="/signup", json={"email": "eoihd@gmai.com", "password": "123456789abcdefg"})
+    response = client.post(url="/signup", json={"email": "eoihd@gmai.com", "password": "A" * 300})
 
     assert response.status_code == 400
     assert response.json() == {"detail": f"Password cannot be longer than {MAX_PASSWORD_LENGTH} characters"}
@@ -110,4 +110,4 @@ def test_signup_successful():
     stored_hash = users_db["eoihd@gmai.com"]
 
     assert stored_hash != test_password
-    assert stored_hash.startswith("$argon2id$")
+    assert ph.verify(hashed_password, test_password) is True
