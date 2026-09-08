@@ -111,3 +111,54 @@ def test_signup_successful():
 
     assert stored_hash != test_password
     assert ph.verify(stored_hash, test_password) is True
+
+
+# --- 3. Signin Endpoint Tests ---
+
+def test_signin_invalid_email():
+    """
+    Verifies that /signin endpoint prevents invalid email format structure.
+    """
+    response = client.post("/signin", json={"email": "eoihdgmaicom", "password": "12345678" })
+
+    assert response.status_code == 422
+
+def test_signin_empty_password():
+    """
+    Verifies that /signin endpoint hides specific database existence data on empty inputs.
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": ""})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Email or Password doesnt match"}
+
+def test_signin_email_doesnt_match():
+    """
+    Verifies that the /signin endpoint prevents user signing in with non-existent email
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post(url="/signin", json={"email": "geoihd@gmai.com", "password": test_password})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Email or Password doesnt match"}
+
+def test_signin_password_doesnt_match():
+    """
+    Verifies that the /signin endpoint prevents user signing in with wrong password
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": "supersecure123"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Email or Password doesnt match"}
+
+def test_signin_succesful():
+    """
+    Verifies that the /signin endpoint signs in the user successfully.
+    """
+    users_db["eoihd@gmai.com"] = hashed_password
+    response = client.post("/signin", json={"email": "eoihd@gmai.com", "password": test_password})
+
+    assert response.status_code == 202
+    assert response.json() == {"message": "Welcome back!"}
