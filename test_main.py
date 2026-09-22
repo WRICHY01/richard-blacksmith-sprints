@@ -1,18 +1,23 @@
 import os
+from datetime import datetime, timezone, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from main import app, users_db, MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, ph
+from postgrest.exceptions import APIError
+
+from main import app, supabase, MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, ph
 
 test_password = "supersecure12"
 hashed_password = ph.hash(test_password)
+expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
 
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def run_around_tests():
-    """Resets the mock in-memory database before and after every single test."""
-    users_db.clear()
+    """Resets the supabase database before and after every single test."""
+    supabase.table("user_sessions").delete().neq("session_token", "").execute()
+    supabase.table("users").delete().neq("email", "").execute()
     yield
 
 # --- 1. Root & Health Check Tests ---
@@ -35,16 +40,21 @@ def test_health_check():
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
+
 # --- 2. Signup Endpoint Tests ---
 
 def test_signup_duplicate_email():
     """
     Verifies that /signup endpoint prevents account duplication
     """
-    users_db["eoihd@gmai.com"] = hashed_password
-    response = client.post("/signup", json={"email": "EoihD@gmai.com", "password": test_password})
+    supabase.table("users").insert({
+        "email": "EoihD@gmai.com".lower(),
+        "hashed_password": hashed_password
+    }).execute()
 
-    assert response.status_code == 400
+    response = client.post("/signup", json={"email": "EoihD@gmai.com", "password": "secret_password"})
+    
+    assert response.status_code == 409
     assert response.json() == {"detail": "That email is already in use"}
 
 def test_signup_invalid_email():
@@ -105,11 +115,18 @@ def test_signup_successful():
 
     assert response.status_code == 201
     assert response.json() == {"message": "Your credentials have been saved! you can now log in"}
-    assert "eoihd@gmai.com" in users_db
 
-    stored_hash = users_db["eoihd@gmai.com"]
+    db_response = supabase.table("users").select("email", "hashed_password").eq("email", "eoihd@gmai.com").execute()
+
+    db_response_session = db_response.data[0]
+    print(f"db_response_session is thus: {db_response_session}")
+    assert len(db_response.data) == 1
+    assert "eoihd@gmai.com" in db_response_session["email"]
+
+    stored_hash = db_response_session["hashed_password"]
 
     assert stored_hash != test_password
+    assert stored_hash.startswith("$argon2id$")
     assert ph.verify(stored_hash, test_password) is True
 
 
@@ -127,7 +144,11 @@ def test_signin_empty_password():
     """
     Verifies that /signin endpoint hides specific database existence data on empty inputs.
     """
-    users_db["eoihd@gmai.com"] = hashed_password
+    supabase.table("users").insert({
+        "email": "eoihd@gmai.com",
+        "hashed_password": hashed_password
+    }).execute()
+
     response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": ""})
 
     assert response.status_code == 400
@@ -137,7 +158,11 @@ def test_signin_email_doesnt_match():
     """
     Verifies that the /signin endpoint prevents user signing in with non-existent email
     """
-    users_db["eoihd@gmai.com"] = hashed_password
+    supabase.table("users").insert({
+            "email": "eoihd@gmai.com",
+            "hashed_password": hashed_password
+        }).execute()
+    
     response = client.post(url="/signin", json={"email": "geoihd@gmai.com", "password": test_password})
 
     assert response.status_code == 400
@@ -147,18 +172,158 @@ def test_signin_password_doesnt_match():
     """
     Verifies that the /signin endpoint prevents user signing in with wrong password
     """
-    users_db["eoihd@gmai.com"] = hashed_password
+    supabase.table("users").insert({
+                "email": "eoihd@gmai.com",
+                "hashed_password": hashed_password
+            }).execute()
+    
     response = client.post(url="/signin", json={"email": "eoihd@gmai.com", "password": "supersecure123"})
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Email or Password doesnt match"}
 
-def test_signin_succesful():
+def test_signin_successful():
     """
     Verifies that the /signin endpoint signs in the user successfully.
     """
-    users_db["eoihd@gmai.com"] = hashed_password
+    supabase.table("users").insert({
+                "email": "eoihd@gmai.com",
+                "hashed_password": hashed_password
+            }).execute()
     response = client.post("/signin", json={"email": "eoihd@gmai.com", "password": test_password})
 
     assert response.status_code == 202
-    assert response.json() == {"message": "Welcome back!"}
+    assert response.json() == {"message": "Welcome!"}
+
+    db_response = supabase.table("user_sessions").select("session_token", "expiration_time").eq("user_email", "eoihd@gmai.com").execute()
+    db_response_session = db_response.data[0]
+
+    assert len(db_response.data) == 1
+    assert "session_id" in response.cookies 
+
+def test_no_active_user_session_found():
+    """
+    Verifies No active user session found
+    """
+    response = client.get("/dashboard")
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized: No Active Session Found!"}
+
+
+def test_invalid_user_session():
+    """
+    Verifies /dashboard endpoint prevents invalid user session from ever persisting
+    """
+    supabase.table("users").insert({
+                    "email": "eoihd@gmai.com",
+                    "hashed_password": hashed_password
+                }).execute()
+    
+    supabase.table("user_sessions").insert({
+                    "user_email": "eoihd@gmai.com",
+                    "session_token": "manually-inserted-token-123",
+                    "expiration_time": expiration_time.isoformat()
+                }).execute()
+
+    response = client.get("/dashboard", cookies={"session_id": ""})
+
+    response.status_code == 401
+    response.json() == {"detail": "Unauthorised: Invalid Session"}
+
+def test_expired_session():
+    """
+    Verifies the /dashboard endpoint prevents expired session from ever persisting
+    """
+    expired_time = datetime.now(timezone.utc) + timedelta(days=-1) # Expired 1 day ago
+    supabase.table("users").insert({
+                        "email": "eoihd@gmai.com",
+                        "hashed_password": hashed_password
+                    }).execute()
+
+    supabase.table("user_sessions").insert(
+            {
+                "user_email": "eoihd@gmai.com",
+                "session_token": "manually-inserted-token-123",
+                "expiration_time": expired_time.isoformat()
+            }
+        ).execute()
+    
+    response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
+
+    response.status_code == 401
+    response.json() == {"detail": "Unauthorised: Session Expired"}
+
+def test_successful_signin_and_dashboard_workflow():
+    """
+    Verifies that the /dashboard endpoint works as expected and survives context reset.
+    """
+    global client
+    from fastapi.testclient import TestClient
+    from main import app
+
+    supabase.table("users").insert({
+                        "email": "eoihd@gmai.com",
+                        "hashed_password": hashed_password
+                    }).execute()
+    
+    signin_response = client.post("/signin", json={"email": "eoihd@gmai.com", "password": test_password})
+
+    assert signin_response.status_code == 202
+    assert signin_response.json() == {"message": "Welcome!"}
+
+    saved_token_value = signin_response.cookies["session_id"]
+    assert "session_id" in signin_response.cookies
+    assert "Max-Age=" in signin_response.headers.get("set-cookie", "")
+
+    db_response = supabase.table("user_sessions").select("user_email", "session_token").eq("session_token", saved_token_value).execute()
+    db_response_session = db_response.data
+
+    assert len(db_response_session) == 1
+    assert db_response_session[0]["session_token"] == saved_token_value
+
+    dashboard_response = client.get("/dashboard", cookies={"session_id": saved_token_value})
+
+    assert dashboard_response.status_code == 200
+    assert "welcome to your secure identity vault" in dashboard_response.json()["message"]
+    assert dashboard_response.json()["authenticated_as"] == "eoihd@gmai.com"
+
+    # Mimicking the user closing the browser tab entirely and reopening to see if it persists
+    client = TestClient(app)
+
+    new_dashboard_response = client.get("/dashboard", cookies={"session_id": saved_token_value})
+
+    assert new_dashboard_response.status_code == 200
+    assert "welcome to your secure identity vault" in new_dashboard_response.json()["message"]
+    assert new_dashboard_response.json()["authenticated_as"] == db_response_session[0]["user_email"]
+
+def test_dashboard_with_pre_populated_session():
+    """
+    Verifies the /dashboard endpoint in pure isolation by 
+    manually pre-populating the cloud user_sessions table first.
+    """
+    global client
+
+    from fastapi.testclient import TestClient
+    from main import app
+
+    expired_time = datetime.now(timezone.utc) + timedelta(days=1)
+    supabase.table("users").insert({
+                            "email": "eoihd@gmai.com",
+                            "hashed_password": hashed_password
+                        }).execute()
+    
+    supabase.table("user_sessions").insert(
+                {
+                    "user_email": "eoihd@gmai.com",
+                    "session_token": "manually-inserted-token-123",
+                    "expiration_time": expired_time.isoformat()
+                }
+            ).execute()
+
+    # Mimicking the user closing the browser tab entirely and reopening to see if it persists
+    client = TestClient(app)
+
+    response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
+    assert response.status_code == 200
+    assert "welcome to your secure identity vault" in response.json()["message"]
+    assert response.json()["authenticated_as"] == "eoihd@gmai.com"
