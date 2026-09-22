@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 import pytest
+import hashlib
 from fastapi.testclient import TestClient
 from postgrest.exceptions import APIError
 
@@ -201,7 +202,7 @@ def test_signin_successful():
     assert len(db_response.data) == 1
     assert "session_id" in response.cookies 
 
-def test_no_active_user_session_found():
+def test_no_session_token_returned_from_browser():
     """
     Verifies No active user session found
     """
@@ -210,10 +211,13 @@ def test_no_active_user_session_found():
     assert response.json() == {"detail": "Unauthorized: No Active Session Found!"}
 
 
-def test_invalid_user_session():
+def test_no_session_token_matching_from_database_due_to_token_mismatch():
     """
     Verifies /dashboard endpoint prevents invalid user session from ever persisting
     """
+
+    hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
+
     supabase.table("users").insert({
                     "email": "eoihd@gmai.com",
                     "hashed_password": hashed_password
@@ -221,14 +225,14 @@ def test_invalid_user_session():
     
     supabase.table("user_sessions").insert({
                     "user_email": "eoihd@gmai.com",
-                    "session_token": "manually-inserted-token-123",
+                    "session_token": hashed_session_token,
                     "expiration_time": expiration_time.isoformat()
                 }).execute()
 
-    response = client.get("/dashboard", cookies={"session_id": ""})
+    response = client.get("/dashboard", cookies={"session_id": "manually-inputted-token-123"})
 
-    response.status_code == 401
-    response.json() == {"detail": "Unauthorised: Invalid Session"}
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized: No Active Session Found!"}
 
 def test_expired_session():
     """
@@ -271,20 +275,22 @@ def test_successful_signin_and_dashboard_workflow():
     assert signin_response.status_code == 202
     assert signin_response.json() == {"message": "Welcome!"}
 
-    saved_token_value = signin_response.cookies["session_id"]
+    saved_token_value = signin_response.cookies['session_id']
     assert "session_id" in signin_response.cookies
     assert "Max-Age=" in signin_response.headers.get("set-cookie", "")
 
-    db_response = supabase.table("user_sessions").select("user_email", "session_token").eq("session_token", saved_token_value).execute()
+    hashed_token_value =  hashlib.sha256(saved_token_value.encode()).hexdigest()
+
+    db_response = supabase.table("user_sessions").select("user_email", "session_token").eq("session_token", hashed_token_value).execute()
     db_response_session = db_response.data
 
     assert len(db_response_session) == 1
-    assert db_response_session[0]["session_token"] == saved_token_value
+    assert db_response_session[0]["session_token"] == hashed_token_value
 
     dashboard_response = client.get("/dashboard", cookies={"session_id": saved_token_value})
 
     assert dashboard_response.status_code == 200
-    assert "welcome to your secure identity vault" in dashboard_response.json()["message"]
+    assert "welcome to your secure identity vault" in dashboard_response.json()['message']
     assert dashboard_response.json()["authenticated_as"] == "eoihd@gmai.com"
 
     # Mimicking the user closing the browser tab entirely and reopening to see if it persists
@@ -306,6 +312,8 @@ def test_dashboard_with_pre_populated_session():
     from fastapi.testclient import TestClient
     from main import app
 
+    hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
+
     expired_time = datetime.now(timezone.utc) + timedelta(days=1)
     supabase.table("users").insert({
                             "email": "eoihd@gmai.com",
@@ -315,7 +323,7 @@ def test_dashboard_with_pre_populated_session():
     supabase.table("user_sessions").insert(
                 {
                     "user_email": "eoihd@gmai.com",
-                    "session_token": "manually-inserted-token-123",
+                    "session_token": hashed_session_token,
                     "expiration_time": expired_time.isoformat()
                 }
             ).execute()

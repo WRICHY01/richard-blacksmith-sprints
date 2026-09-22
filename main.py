@@ -1,6 +1,7 @@
 import os
 
 import uuid
+import hashlib
 from supabase import Client, create_client
 from postgrest.exceptions import APIError
 from fastapi import FastAPI, HTTPException, Response, Cookie
@@ -84,9 +85,11 @@ def user_signin(user_cred: UserRegistration, response: Response):
     validate the user's signin credentials matches information in the user-database.
     """
     normalized_email = user_cred.email.lower()
-    db_response = supabase.table("users").select("hashed_password").eq("email", user_cred.email).execute()
+    db_response = supabase.table("users").select("hashed_password").eq("email", normalized_email).execute()
 
     if not db_response.data:
+        # A dummy hash process so response times match!
+        ph.hash(user_cred.password)
         raise HTTPException(status_code=400, detail="Email or Password doesnt match")
 
     user_hashed_password = db_response.data[0]["hashed_password"]
@@ -97,21 +100,23 @@ def user_signin(user_cred: UserRegistration, response: Response):
     except VerifyMismatchError:
         raise HTTPException(status_code=400, detail="Email or Password doesnt match")
     
-    session_token = str(uuid.uuid4())
+    raw_session_token = str(uuid.uuid4())
+
+    hashed_session_token = hashlib.sha256(raw_session_token.encode()).hexdigest()
 
     expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
     
     supabase.table("user_sessions").insert({
-        "session_token": session_token,
+        "session_token": hashed_session_token,
         "user_email": normalized_email,
         "expiration_time": expiration_time.isoformat()
     }).execute()
 
     response.set_cookie(
         key="session_id",
-        value=session_token,
+        value=raw_session_token,
         httponly=True,
-        secure=False,
+        secure=True,
         samesite="lax",
         max_age=86400
     )
@@ -126,7 +131,9 @@ def view_dashboard_page(session_id: str | None = Cookie(default=None)):
     if not session_id:
         raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
 
-    session_db_response = supabase.table("user_sessions").select("user_email", "session_token", "expiration_time").eq("session_token", session_id).execute()
+    hashed_incoming_token = hashlib.sha256(session_id.encode()).hexdigest()    
+
+    session_db_response = supabase.table("user_sessions").select("user_email", "session_token", "expiration_time").eq("session_token", hashed_incoming_token).execute()
     user_session_token = session_db_response.data
     
     if not user_session_token:
@@ -138,5 +145,5 @@ def view_dashboard_page(session_id: str | None = Cookie(default=None)):
     if todays_date > expiry_date:
         raise HTTPException(status_code=401, detail="Unauthorized: Session expired")
     
-    return {"message": f"welcome to your secure identity vault, {user_session_token[0]["user_email"]}",
-            "authenticated_as": user_session_token[0]["user_email"]}
+    return {"message": f"welcome to your secure identity vault, {user_session_token[0]['user_email']}",
+            "authenticated_as": user_session_token[0]['user_email']}
