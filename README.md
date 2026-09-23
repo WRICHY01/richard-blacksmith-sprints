@@ -44,7 +44,7 @@ pytest
 ```
 
 ## ⚠️ Integration Testing Warning
-The test suite executed via `pytest` is an active integration test suite that communicates directly with the cloud database configured inside your local `.env` file. 
+The test suite executed via `pytest` is an active integration test suite that communicates directly with the cloud database configured inside your local `.env` file.
 
 * Running the tests requires active internet access and valid Supabase API keys.
-* The test harness executes selective target deletions against specified test accounts (e.g., `eoihd@gmai.com`) before each run. Ensure your `.env` configuration points to a dedicated testing or development database environment, **never a live production project store.**
+* The test harness deletes rows for its known test account (`eoihd@gmai.com`) once at the start of the test session — this makes the suite self-healing even if a previous run was interrupted — and again after every individual test. Ensure your `.env` configuration points to a dedicated testing or development database environment, **never a live production project store.**
