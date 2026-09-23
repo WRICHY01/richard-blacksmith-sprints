@@ -37,10 +37,14 @@ uvicorn main:app --reload
 
 Once running, the home page is live at http://127.0.0.1:8000 and the health check endpoint is at http://127.0.0.1:8000/health
 
-## How to run tests
-
-To run the automated test suite in-memory:
-
+## Running the Tests
+To execute the automated integration test suite against your configured environment:
 ```bash
 pytest
 ```
+
+## ⚠️ Integration Testing Warning
+The test suite executed via `pytest` is an active integration test suite that communicates directly with the cloud database configured inside your local `.env` file. 
+
+* Running the tests requires active internet access and valid Supabase API keys.
+* The test harness executes selective target deletions against specified test accounts (e.g., `eoihd@gmai.com`) before each run. Ensure your `.env` configuration points to a dedicated testing or development database environment, **never a live production project store.**
