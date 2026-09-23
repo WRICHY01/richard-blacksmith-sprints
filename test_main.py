@@ -238,7 +238,9 @@ def test_expired_session():
     """
     Verifies the /dashboard endpoint prevents expired session from ever persisting
     """
+    hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
     expired_time = datetime.now(timezone.utc) + timedelta(days=-1) # Expired 1 day ago
+
     supabase.table("users").insert({
                         "email": "eoihd@gmai.com",
                         "hashed_password": hashed_password
@@ -247,15 +249,15 @@ def test_expired_session():
     supabase.table("user_sessions").insert(
             {
                 "user_email": "eoihd@gmai.com",
-                "session_token": "manually-inserted-token-123",
+                "session_token": hashed_session_token,
                 "expiration_time": expired_time.isoformat()
             }
         ).execute()
     
     response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
 
-    response.status_code == 401
-    response.json() == {"detail": "Unauthorised: Session Expired"}
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized: Session Expired"}
 
 def test_successful_signin_and_dashboard_workflow():
     """

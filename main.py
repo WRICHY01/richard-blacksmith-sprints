@@ -116,7 +116,7 @@ def user_signin(user_cred: UserRegistration, response: Response):
         key="session_id",
         value=raw_session_token,
         httponly=True,
-        secure=True,
+        secure=False,
         samesite="lax",
         max_age=86400
     )
@@ -143,7 +143,7 @@ def view_dashboard_page(session_id: str | None = Cookie(default=None)):
     expiry_date = datetime.fromisoformat(user_session_token[0]["expiration_time"].replace("Z", "+00:00"))
     
     if todays_date > expiry_date:
-        raise HTTPException(status_code=401, detail="Unauthorized: Session expired")
+        raise HTTPException(status_code=401, detail="Unauthorized: Session Expired")
     
     return {"message": f"welcome to your secure identity vault, {user_session_token[0]['user_email']}",
             "authenticated_as": user_session_token[0]['user_email']}
