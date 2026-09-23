@@ -44,3 +44,10 @@ To run the automated test suite in-memory:
 ```bash
 pytest
 ```
+
+## ⚠️ Integration Testing Warning
+The test suite executed via `pytest` is an active integration test suite that communicates directly with the cloud database configured inside your local `.env` file. 
+
+* Running the tests requires active internet access and valid Supabase API keys.
+* The test harness executes selective target deletions against specified test accounts (e.g., `eoihd@gmai.com`) before each run. Ensure your `.env` configuration points to a dedicated testing or development database environment, **never a live production project store.**
+

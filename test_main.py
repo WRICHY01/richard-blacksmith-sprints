@@ -17,8 +17,9 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def run_around_tests():
     """Resets the supabase database before and after every single test."""
-    supabase.table("user_sessions").delete().neq("session_token", "").execute()
-    supabase.table("users").delete().neq("email", "").execute()
+    test_emails = ["eoihd@gmai.com", "geoihd@gmai.com"]
+    supabase.table("user_sessions").delete().in_("user_email", test_emails).execute()
+    supabase.table("users").delete().in_("email", test_emails).execute()
     yield
 
 # --- 1. Root & Health Check Tests ---
