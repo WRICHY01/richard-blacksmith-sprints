@@ -14,13 +14,20 @@ expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
 
 client = TestClient(app)
 
+TRACKED_TEST_EMAILS = set()
+
 @pytest.fixture(autouse=True)
 def run_around_tests():
-    """Resets the supabase database before and after every single test."""
-    test_emails = ["eoihd@gmai.com", "geoihd@gmai.com"]
-    supabase.table("user_sessions").delete().in_("user_email", test_emails).execute()
-    supabase.table("users").delete().in_("email", test_emails).execute()
+    """Safely cleans up only the specific test accounts generated during the active test run."""
+
     yield
+
+    if TRACKED_TEST_EMAILS:
+        emails_to_wipe = list(TRACKED_TEST_EMAILS)
+        supabase.table("user_sessions").delete().in_("user_email", emails_to_wipe).execute()
+        supabase.table("users").delete().in_("email", emails_to_wipe).execute()
+
+        TRACKED_TEST_EMAILS.clear()
 
 # --- 1. Root & Health Check Tests ---
 
@@ -49,6 +56,8 @@ def test_signup_duplicate_email():
     """
     Verifies that /signup endpoint prevents account duplication
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
+
     supabase.table("users").insert({
         "email": "EoihD@gmai.com".lower(),
         "hashed_password": hashed_password
@@ -113,6 +122,8 @@ def test_signup_successful():
     """
     Verifies that the /signup endpoint validates and saves user data correctly.
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
+
     response = client.post("/signup", json={"email": "eoihd@gmai.com", "password": test_password})
 
     assert response.status_code == 201
@@ -146,6 +157,8 @@ def test_signin_empty_password():
     """
     Verifies that /signin endpoint hides specific database existence data on empty inputs.
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
+
     supabase.table("users").insert({
         "email": "eoihd@gmai.com",
         "hashed_password": hashed_password
@@ -160,6 +173,8 @@ def test_signin_email_doesnt_match():
     """
     Verifies that the /signin endpoint prevents user signing in with non-existent email
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
+
     supabase.table("users").insert({
             "email": "eoihd@gmai.com",
             "hashed_password": hashed_password
@@ -174,6 +189,8 @@ def test_signin_password_doesnt_match():
     """
     Verifies that the /signin endpoint prevents user signing in with wrong password
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
+
     supabase.table("users").insert({
                 "email": "eoihd@gmai.com",
                 "hashed_password": hashed_password
@@ -188,6 +205,8 @@ def test_signin_successful():
     """
     Verifies that the /signin endpoint signs in the user successfully.
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
+
     supabase.table("users").insert({
                 "email": "eoihd@gmai.com",
                 "hashed_password": hashed_password
@@ -216,7 +235,7 @@ def test_no_session_token_matching_from_database_due_to_token_mismatch():
     """
     Verifies /dashboard endpoint prevents invalid user session from ever persisting
     """
-
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
     hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
 
     supabase.table("users").insert({
@@ -239,6 +258,7 @@ def test_expired_session():
     """
     Verifies the /dashboard endpoint prevents expired session from ever persisting
     """
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
     hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
     expired_time = datetime.now(timezone.utc) + timedelta(days=-1) # Expired 1 day ago
 
@@ -268,6 +288,7 @@ def test_successful_signin_and_dashboard_workflow():
     from fastapi.testclient import TestClient
     from main import app
 
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
     supabase.table("users").insert({
                         "email": "eoihd@gmai.com",
                         "hashed_password": hashed_password
@@ -311,10 +332,11 @@ def test_dashboard_with_pre_populated_session():
     manually pre-populating the cloud user_sessions table first.
     """
     global client
-
+    
     from fastapi.testclient import TestClient
     from main import app
 
+    TRACKED_TEST_EMAILS.add("eoihd@gmai.com")
     hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
 
     expired_time = datetime.now(timezone.utc) + timedelta(days=1)
