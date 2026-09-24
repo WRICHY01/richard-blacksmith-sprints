@@ -351,20 +351,19 @@ def test_user_signout_no_active_session():
 
 
 def test_user_signout_session_token_not_matching_db_session_token():
-    """
+    """Verifies that /signout rejects a cookie that doesn't match any stored session."""
     
-    """
     hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
     
     expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
     supabase.table("users").insert({
-                            "email": "eoihd@gmai.com",
+                            "email": TEST_EMAIL,
                             "hashed_password": hashed_password
                         }).execute()
     
     supabase.table("user_sessions").insert(
                 {
-                    "user_email": "eoihd@gmai.com",
+                    "user_email": TEST_EMAIL,
                     "session_token": hashed_session_token,
                     "expiration_time": expiration_time.isoformat()
                 }
@@ -372,15 +371,21 @@ def test_user_signout_session_token_not_matching_db_session_token():
     
     response = client.post("/signout", cookies={"session_id": "manually-inputted-token-123"})
 
-    # assert len(response.cookies["session_id"]) is None
     assert response.status_code == 401
-    assert response.json() == {"detail": "Unathorized: No Active Session Found!"}
+    assert response.json() == {"detail": "Unauthorized: No Active Session Found!"}
 
 
 def test_user_signout_successful():
     """
-    
+        Verifies a live session works on the /dashboard endpoint, then dies completely after 
+        /signout — the cookie is cleared client-side AND the row is gone server-side, so no tab
+        holding the old cookie can use it again.
     """
+    global client
+    
+    from fastapi.testclient import TestClient
+    from main import app
+        
     hashed_session_token = hashlib.sha256("manually-inserted-token-123".encode()).hexdigest()
     
     expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
@@ -396,12 +401,21 @@ def test_user_signout_successful():
                     "expiration_time": expiration_time.isoformat()
                 }
             ).execute()
-    
-    response = client.post("/signout", cookies={"session_id": "manually-inserted-token-123"})
 
-    # assert len(response.cookies["session_id"]) is None
-    assert response.status_code == 200
-    assert response.json() == {"message": "Successfully logged out"}
+    
+    dashboard_response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
+    assert dashboard_response.status_code == 200
+    assert "welcome to your secure identity vault" in dashboard_response.json()["message"]
+    assert dashboard_response.json()["authenticated_as"] == "eoihd@gmai.com"
+
+    signout_response = client.post("/signout", cookies={"session_id": "manually-inserted-token-123"})
+
+    assert signout_response.status_code == 200
+    assert signout_response.json() == {"message": "Successfully logged out"}
+
+    set_cookie_header = signout_response.headers.get("set-cookie", "")
+    assert "session_id=" in set_cookie_header
+    assert "Max-Age=0" in set_cookie_header or "expires=" in set_cookie_header.lower()
 
     db_check = supabase.table("user_sessions").select("session_token").eq("session_token", hashed_session_token).execute()
     assert len(db_check.data) == 0
@@ -409,3 +423,11 @@ def test_user_signout_successful():
     dashboard_response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
 
     assert dashboard_response.status_code == 401
+    assert dashboard_response.json() == {"detail": "Unauthorized: No Active Session Found!"}
+
+    client = TestClient(app)
+
+    restart_response = client.get("/dashboard", cookies={"sesion_id": "manually-inserted-token-123"})
+
+    assert restart_response.status_code == 401
+    assert restart_response.json() == {"detail": "Unauthorized: No Active Session Found!"}

@@ -162,7 +162,7 @@ def user_signout(response: Response, session_id: str | None = Cookie(default=Non
     db_response = supabase.table("user_sessions").select("session_token").eq("session_token", hashed_incoming_token).execute()
 
     if not db_response.data:
-        raise HTTPException(status_code=401, detail="Unathorized: No Active Session Found!")
+        raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
      
     try:
         supabase.table("user_sessions").delete().eq("session_token", hashed_incoming_token).execute()
