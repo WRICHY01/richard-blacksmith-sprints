@@ -370,9 +370,11 @@ def test_user_signout_session_token_not_matching_db_session_token():
             ).execute()
     
     response = client.post("/signout", cookies={"session_id": "manually-inputted-token-123"})
+    db_response = supabase.table("user_sessions").select("user_email").eq("session_token", hashed_session_token).execute()
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Unauthorized: No Active Session Found!"}
+    assert len(db_response.data) == 1
 
 
 def test_user_signout_successful():
@@ -427,7 +429,7 @@ def test_user_signout_successful():
 
     client = TestClient(app)
 
-    restart_response = client.get("/dashboard", cookies={"sesion_id": "manually-inserted-token-123"})
+    restart_response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
 
     assert restart_response.status_code == 401
     assert restart_response.json() == {"detail": "Unauthorized: No Active Session Found!"}
