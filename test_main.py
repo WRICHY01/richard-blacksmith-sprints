@@ -319,13 +319,13 @@ def test_dashboard_with_pre_populated_session():
 
     expired_time = datetime.now(timezone.utc) + timedelta(days=1)
     supabase.table("users").insert({
-                            "email": "eoihd@gmai.com",
+                            "email": TEST_EMAIL,
                             "hashed_password": hashed_password
                         }).execute()
     
     supabase.table("user_sessions").insert(
                 {
-                    "user_email": "eoihd@gmai.com",
+                    "user_email": TEST_EMAIL,
                     "session_token": hashed_session_token,
                     "expiration_time": expired_time.isoformat()
                 }
@@ -392,13 +392,13 @@ def test_user_signout_successful():
     
     expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
     supabase.table("users").insert({
-                            "email": "eoihd@gmai.com",
+                            "email": TEST_EMAIL,
                             "hashed_password": hashed_password
                         }).execute()
     
     supabase.table("user_sessions").insert(
                 {
-                    "user_email": "eoihd@gmai.com",
+                    "user_email": TEST_EMAIL,
                     "session_token": hashed_session_token,
                     "expiration_time": expiration_time.isoformat()
                 }
@@ -408,7 +408,7 @@ def test_user_signout_successful():
     dashboard_response = client.get("/dashboard", cookies={"session_id": "manually-inserted-token-123"})
     assert dashboard_response.status_code == 200
     assert "welcome to your secure identity vault" in dashboard_response.json()["message"]
-    assert dashboard_response.json()["authenticated_as"] == "eoihd@gmai.com"
+    assert dashboard_response.json()["authenticated_as"] == TEST_EMAIL
 
     signout_response = client.post("/signout", cookies={"session_id": "manually-inserted-token-123"})
 
