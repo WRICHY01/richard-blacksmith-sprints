@@ -147,29 +147,3 @@ def view_dashboard_page(session_id: str | None = Cookie(default=None)):
     
     return {"message": f"welcome to your secure identity vault, {user_session_token[0]['user_email']}",
             "authenticated_as": user_session_token[0]['user_email']}
-
-
-@app.post("/signout")
-def user_signout(response: Response, session_id: str | None = Cookie(default=None)):
-    """
-    Securely terminates a user session by wiping the cloud tracking database row
-    and clearing the physical browser cookie parameter files.
-    """
-    if not session_id:
-        raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
-    
-    hashed_incoming_token = hashlib.sha256(session_id.encode()).hexdigest()
-    db_response = supabase.table("user_sessions").select("session_token").eq("session_token", hashed_incoming_token).execute()
-
-    if not db_response.data:
-        raise HTTPException(status_code=401, detail="Unathorized: No Active Session Found!")
-     
-    try:
-        supabase.table("user_sessions").delete().eq("session_token", hashed_incoming_token).execute()
-
-    except APIError as e:
-        raise HTTPException(status_code=500, detail="Server error during session termination, please try again")
-
-    response.delete_cookie("session_id")
-
-    return {"message": "Successfully logged out"}
