@@ -1,7 +1,25 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, EmailStr, Field
+import os
+
+import uuid
+import hashlib
+from supabase import Client, create_client
+from postgrest.exceptions import APIError
+from fastapi import FastAPI, HTTPException, Response, Cookie
+from pydantic import BaseModel, EmailStr
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from datetime import datetime, timezone, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Missing database configuration inside .env file")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 app = FastAPI()
@@ -9,11 +27,12 @@ ph = PasswordHasher()
 
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 256
-users_db = {}
+
 
 class UserRegistration(BaseModel):
     email: EmailStr
     password: str
+
 
 @app.get('/')
 def get_root():
@@ -25,7 +44,7 @@ def get_root():
 @app.get("/health")
 def get_health_status():
     """
-    The health of the site
+    The health of the application
     """
     return {"status": "ok"}
 
@@ -45,10 +64,112 @@ def register_user(user_cred: UserRegistration):
     if len(user_cred.password) > MAX_PASSWORD_LENGTH:
         raise HTTPException(status_code=400, detail=f"Password cannot be longer than {MAX_PASSWORD_LENGTH} characters")
 
-    if normalized_email in users_db:
-        raise HTTPException(status_code=400, detail="That email is already in use")
-        
     hashed_user_password = ph.hash(user_cred.password)
-    users_db[normalized_email] = hashed_user_password
+
+    try:
+        supabase.table("users").insert({
+            "email": normalized_email,
+            "hashed_password": hashed_user_password
+        }).execute()
+        
+    except APIError as e:
+        if e.code == "23505":
+            raise HTTPException(status_code=409, detail="That email is already in use")
+        raise
 
     return {"message": "Your credentials have been saved! you can now log in"}
+
+@app.post("/signin", status_code=202)
+def user_signin(user_cred: UserRegistration, response: Response):
+    """
+    validate the user's signin credentials matches information in the user-database.
+    """
+    normalized_email = user_cred.email.lower()
+    db_response = supabase.table("users").select("hashed_password").eq("email", normalized_email).execute()
+
+    if not db_response.data:
+        # A dummy hash process so response times match!
+        ph.hash(user_cred.password)
+        raise HTTPException(status_code=400, detail="Email or Password doesnt match")
+
+    user_hashed_password = db_response.data[0]["hashed_password"]
+
+    try:
+        ph.verify(user_hashed_password, user_cred.password)
+
+    except VerifyMismatchError:
+        raise HTTPException(status_code=400, detail="Email or Password doesnt match")
+    
+    raw_session_token = str(uuid.uuid4())
+
+    hashed_session_token = hashlib.sha256(raw_session_token.encode()).hexdigest()
+
+    expiration_time = datetime.now(timezone.utc) + timedelta(days=1)
+    
+    supabase.table("user_sessions").insert({
+        "session_token": hashed_session_token,
+        "user_email": normalized_email,
+        "expiration_time": expiration_time.isoformat()
+    }).execute()
+
+    response.set_cookie(
+        key="session_id",
+        value=raw_session_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=86400
+    )
+
+    return {"message": "Welcome!"}
+
+@app.get("/dashboard")
+def view_dashboard_page(session_id: str | None = Cookie(default=None)):
+    """
+    Securely logs the user in after validation and survives context reset
+    """
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
+
+    hashed_incoming_token = hashlib.sha256(session_id.encode()).hexdigest()    
+
+    session_db_response = supabase.table("user_sessions").select("user_email", "session_token", "expiration_time").eq("session_token", hashed_incoming_token).execute()
+    user_session_token = session_db_response.data
+    
+    if not user_session_token:
+        raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
+
+    todays_date = datetime.now(timezone.utc)
+    expiry_date = datetime.fromisoformat(user_session_token[0]["expiration_time"].replace("Z", "+00:00"))
+    
+    if todays_date > expiry_date:
+        raise HTTPException(status_code=401, detail="Unauthorized: Session Expired")
+    
+    return {"message": f"welcome to your secure identity vault, {user_session_token[0]['user_email']}",
+            "authenticated_as": user_session_token[0]['user_email']}
+
+
+@app.post("/signout")
+def user_signout(response: Response, session_id: str | None = Cookie(default=None)):
+    """
+    Securely terminates a user session by wiping the cloud tracking database row
+    and clearing the physical browser cookie parameter files.
+    """
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
+    
+    hashed_incoming_token = hashlib.sha256(session_id.encode()).hexdigest()
+    db_response = supabase.table("user_sessions").select("session_token").eq("session_token", hashed_incoming_token).execute()
+
+    if not db_response.data:
+        raise HTTPException(status_code=401, detail="Unauthorized: No Active Session Found!")
+     
+    try:
+        supabase.table("user_sessions").delete().eq("session_token", hashed_incoming_token).execute()
+
+    except APIError as e:
+        raise HTTPException(status_code=500, detail="Server error during session termination, please try again")
+
+    response.delete_cookie("session_id")
+
+    return {"message": "Successfully logged out"}
